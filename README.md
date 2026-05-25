@@ -238,6 +238,53 @@ pytest -v
 
 ## Troubleshooting
 
+### YouTube Blocked the Download
+
+**Problem**: "YouTube blocked the download. Try a different video or check your network."
+
+**Why this happens**: 
+YouTube aggressively blocks automated requests, even with User-Agent headers and retries. This is a platform-level protection, not a code defect.
+
+**Solutions** (try in order):
+
+1. **Try a Different Video**
+   - YouTube blocks different videos unpredictably
+   - Some videos are more heavily protected than others
+
+2. **Use Authenticated Access (⭐ Recommended)**
+   - Log into YouTube with your account, then extract your session cookies
+   - This bypasses most anti-bot blocking
+   
+   **Steps:**
+   ```bash
+   # See detailed instructions
+   python get_cookies.py
+   ```
+   
+   Then follow one of these methods:
+   - **Option 1 (Easiest)**: Install browser extension "Get cookies.txt" and export cookies
+   - **Option 2 (Automatic)**: Run `yt-dlp --cookies-from-browser chrome` (requires Chrome open)
+   - **Option 3 (Manual)**: Extract cookies from browser DevTools
+   
+   Once you have `cookies.txt` in the project root, the app will use authenticated access automatically.
+
+3. **Wait and Retry**
+   - YouTube rate-limits heavily. Wait 5-10 minutes before trying again
+   - Don't submit multiple jobs in quick succession
+
+4. **Check Your Network**
+   - Verify internet connection: `ping google.com`
+   - Check if you're behind a proxy or firewall
+   - Try a different network if available
+
+5. **For Production / High Volume**
+   - Use a **proxy rotation service** (BrightData, Residential Proxies)
+   - Use **browser automation** (Selenium/Playwright with real browser)
+   - Use **alternative platforms** (Vimeo, self-hosted, podcasts)
+   - Build a **transcript cache** for popular videos
+
+**Status**: This is a known YouTube platform limitation. Authenticated access (cookies) provides the best workaround for personal use.
+
 ### API Connection Error in Streamlit
 
 **Problem**: "Cannot connect to the backend API"

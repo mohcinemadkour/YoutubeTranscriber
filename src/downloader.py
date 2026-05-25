@@ -8,6 +8,22 @@ import yt_dlp
 
 logger = logging.getLogger(__name__)
 
+# Path to cookies file for authenticated YouTube access
+COOKIES_FILE = Path("cookies.txt")
+
+
+def get_cookies_file() -> Path | None:
+    """
+    Check if cookies.txt exists for authenticated YouTube access.
+
+    Returns:
+        Path: Path to cookies.txt if it exists, None otherwise.
+    """
+    if COOKIES_FILE.exists():
+        logger.info(f"Using authenticated cookies from: {COOKIES_FILE}")
+        return COOKIES_FILE
+    return None
+
 
 def validate_youtube_url(url: str) -> bool:
     """
@@ -102,6 +118,17 @@ def download_audio(
             "sleep_interval": 1,
             "max_sleep_interval": 3,
         }
+
+        # Check for authenticated cookies to bypass YouTube blocking
+        cookies_file = get_cookies_file()
+        if cookies_file:
+            ydl_opts["cookiefile"] = str(cookies_file)
+            logger.info("Enabling authenticated YouTube access with cookies")
+        else:
+            logger.info(
+                "No cookies.txt found. To use authenticated access, "
+                "export cookies from your browser (see README.md for instructions)."
+            )
 
         logger.info(
             "Using realistic User-Agent and retry mechanisms to bypass bot detection"
