@@ -2,9 +2,10 @@
 
 import threading
 import uuid
+from pathlib import Path
 from typing import Dict, Optional
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, File, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,7 @@ from src.utils import (
     setup_logger,
     build_output_filename,
     get_output_directory,
+    get_temp_path,
     get_whisper_model,
     file_exists,
 )
@@ -55,6 +57,17 @@ class TranscribeResponse(BaseModel):
         ..., description="Job status: queued, processing, completed, failed"
     )
     message: str = Field(..., description="Status message")
+
+
+class FileUploadResponse(BaseModel):
+    """Response model for file upload request."""
+
+    job_id: str = Field(..., description="Unique job ID for tracking")
+    status: str = Field(
+        ..., description="Job status: queued, processing, completed, failed"
+    )
+    message: str = Field(..., description="Status message")
+    filename: str = Field(..., description="Uploaded filename")
 
 
 class JobStatusResponse(BaseModel):
@@ -135,6 +148,102 @@ async def transcribe(
         job_id=job_id,
         status="queued",
         message="Transcription job has been queued",
+    )
+
+
+@app.post("/transcribe/file", response_model=FileUploadResponse, tags=["Transcription"])
+async def transcribe_file(
+    file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()
+) -> FileUploadResponse:
+    """
+    Start a new transcription job from an uploaded audio/video file.
+
+    Supported formats: mp3, mp4, wav, m4a, ogg, webm, flac
+    Max file size: 500MB
+
+    Args:
+        file: Audio or video file to transcribe.
+        background_tasks: FastAPI background tasks.
+
+    Returns:
+        FileUploadResponse: Job information including job_id.
+
+    Raises:
+        HTTPException: If file type is unsupported or file is too large.
+    """
+    logger.info(f"File upload request: {file.filename}")
+
+    # Validate file extension
+    supported_formats = {".mp3", ".mp4", ".wav", ".m4a", ".ogg", ".webm", ".flac"}
+    file_ext = Path(file.filename).suffix.lower()
+
+    if file_ext not in supported_formats:
+        logger.error(f"Unsupported file type: {file_ext}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file format: {file_ext}. "
+            f"Supported: {', '.join(supported_formats)}",
+        )
+
+    # Validate file size (500MB max)
+    max_size_bytes = 500 * 1024 * 1024  # 500MB
+    file_size = 0
+
+    # Create job ID and temp file path
+    job_id = str(uuid.uuid4())
+    temp_file_path = get_temp_path(f"{job_id}_{file.filename}")
+
+    try:
+        # Save uploaded file to temp directory
+        with open(temp_file_path, "wb") as buffer:
+            while True:
+                chunk = await file.read(8192)  # 8KB chunks
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > max_size_bytes:
+                    # Clean up partial file
+                    temp_file_path.unlink()
+                    logger.error(f"File too large: {file.filename}")
+                    raise HTTPException(
+                        status_code=413,
+                        detail="File too large. Maximum size is 500MB.",
+                    )
+                buffer.write(chunk)
+
+        logger.info(f"File saved to temp: {temp_file_path}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to save uploaded file: {str(e)}")
+        if temp_file_path.exists():
+            temp_file_path.unlink()
+        raise HTTPException(status_code=500, detail="Failed to save file")
+
+    # Initialize job status
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "queued",
+            "message": "Job queued for processing",
+            "progress": 0,
+            "output_file": None,
+            "error": None,
+            "temp_file_path": str(temp_file_path),
+            "original_filename": file.filename,
+            "include_metadata": True,
+        }
+
+    logger.info(f"New file transcription job created: {job_id}")
+
+    # Start background task
+    background_tasks.add_task(_process_file_transcription_job, job_id)
+
+    return FileUploadResponse(
+        job_id=job_id,
+        status="queued",
+        message="File transcription job has been queued",
+        filename=file.filename,
     )
 
 
@@ -317,6 +426,98 @@ def _process_transcription_job(
                 cleanup_audio_file(audio_file_path)
             except Exception as e:
                 logger.error(f"Failed to cleanup audio file: {str(e)}")
+
+
+def _process_file_transcription_job(job_id: str) -> None:
+    """
+    Process a file transcription job in the background.
+
+    Args:
+        job_id: Unique job identifier.
+    """
+    temp_file_path: Optional[str] = None
+
+    try:
+        logger.info(f"Starting file transcription job: {job_id}")
+
+        with jobs_lock:
+            temp_file_path = jobs[job_id]["temp_file_path"]
+            original_filename = jobs[job_id]["original_filename"]
+            jobs[job_id]["status"] = "processing"
+            jobs[job_id]["message"] = "Validating audio file..."
+            jobs[job_id]["progress"] = 10
+
+        # Validate temp file exists
+        temp_path = Path(temp_file_path)
+        if not temp_path.exists():
+            raise RuntimeError(f"Temp file not found: {temp_file_path}")
+
+        logger.info(f"Processing temp file: {temp_file_path}")
+
+        with jobs_lock:
+            jobs[job_id]["message"] = "Transcribing audio..."
+            jobs[job_id]["progress"] = 50
+
+        # Transcribe audio
+        whisper_model = get_whisper_model()
+        result = transcribe_audio(temp_file_path, model_name=whisper_model)
+
+        with jobs_lock:
+            jobs[job_id]["message"] = "Formatting transcript..."
+            jobs[job_id]["progress"] = 80
+
+        logger.info("Audio transcribed successfully")
+
+        # Format transcript with timestamps
+        formatted_transcript = format_transcript_with_timestamps(result["segments"])
+
+        # Build output filename from original filename
+        filename_without_ext = Path(original_filename).stem
+        output_filename = build_output_filename(filename_without_ext)
+        output_dir = get_output_directory()
+        output_file_path = output_dir / output_filename
+
+        # Save transcript with metadata
+        metadata = {
+            "Title": filename_without_ext,
+            "Language": result["language"],
+            "Model": result["model"],
+            "Source File": original_filename,
+        }
+
+        save_transcript(
+            formatted_transcript,
+            str(output_file_path),
+            include_metadata=True,
+            metadata=metadata,
+        )
+
+        logger.info(f"Transcript saved to: {output_file_path}")
+
+        with jobs_lock:
+            jobs[job_id]["status"] = "completed"
+            jobs[job_id]["message"] = "Transcription completed successfully"
+            jobs[job_id]["progress"] = 100
+            jobs[job_id]["output_file"] = output_filename
+
+    except Exception as e:
+        logger.error(f"File transcription job failed: {str(e)}")
+        with jobs_lock:
+            jobs[job_id]["status"] = "failed"
+            jobs[job_id]["message"] = "Transcription failed"
+            jobs[job_id]["error"] = str(e)
+            jobs[job_id]["progress"] = 0
+
+    finally:
+        # Cleanup temp file
+        if temp_file_path:
+            try:
+                temp_path = Path(temp_file_path)
+                if temp_path.exists():
+                    temp_path.unlink()
+                    logger.info(f"Cleaned up temp file: {temp_file_path}")
+            except Exception as e:
+                logger.error(f"Failed to cleanup temp file: {str(e)}")
 
 
 if __name__ == "__main__":

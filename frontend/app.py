@@ -114,6 +114,40 @@ def submit_transcription(youtube_url: str, include_metadata: bool) -> Optional[s
         return None
 
 
+def submit_file_transcription(uploaded_file) -> Optional[str]:
+    """
+    Submit a file transcription request to the backend.
+
+    Args:
+        uploaded_file: Streamlit UploadedFile object.
+
+    Returns:
+        str: Job ID if successful, None otherwise.
+    """
+    try:
+        files = {"file": (uploaded_file.name, uploaded_file.getbuffer())}
+        response = requests.post(
+            f"{API_BASE_URL}/transcribe/file",
+            files=files,
+            timeout=30,
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(f"File transcription job submitted: {data['job_id']}")
+            return data["job_id"]
+        else:
+            error_detail = response.json().get("detail", "Unknown error")
+            logger.error(f"File transcription submission failed: {error_detail}")
+            st.error(f"❌ Error: {error_detail}")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"API request failed: {str(e)}")
+        st.error(f"❌ Failed to connect to API: {str(e)}")
+        return None
+
+
 def get_job_status(job_id: str) -> Optional[dict]:
     """
     Get the status of a transcription job.
@@ -271,7 +305,7 @@ def main() -> None:
         )
 
     # Tabs
-    tab1, tab2, tab3 = st.tabs(["📥 Transcribe", "📋 History", "ℹ️ About"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📥 YouTube URL", "📤 Upload Audio", "📋 History", "ℹ️ About"])
 
     with tab1:
         st.header("Transcribe a YouTube Video")
@@ -340,6 +374,80 @@ def main() -> None:
                                 )
 
     with tab2:
+        st.header("Transcribe from Audio File")
+
+        st.markdown(
+            '<div class="info-box">'
+            "<strong>📝 Tip:</strong> Download audio from YouTube using "
+            '<a href="https://cobalt.tools" target="_blank">cobalt.tools</a>, '
+            "then upload the audio file here."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("**Supported formats:** MP3, MP4, WAV, M4A, OGG, WebM, FLAC")
+        st.markdown("**Max file size:** 500MB")
+
+        uploaded_file = st.file_uploader(
+            "Choose an audio or video file",
+            type=["mp3", "mp4", "wav", "m4a", "ogg", "webm", "flac"],
+            help="Select an audio or video file to transcribe",
+        )
+
+        if st.button("🚀 Transcribe File", use_container_width=True, key="transcribe_file"):
+            if not uploaded_file:
+                st.error("❌ Please select a file to transcribe")
+            else:
+                with st.spinner("Submitting file transcription request..."):
+                    job_id = submit_file_transcription(uploaded_file)
+
+                    if job_id:
+                        st.success(
+                            f"✅ Job submitted! Job ID: `{job_id}`"
+                        )
+
+                        # Show progress
+                        st.markdown("---")
+                        st.subheader("📊 Transcription Progress")
+
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+
+                        output_file = wait_for_completion(
+                            job_id, progress_bar, status_text
+                        )
+
+                        if output_file:
+                            st.markdown("---")
+                            st.success(
+                                f"✅ Transcription completed! File: `{output_file}`"
+                            )
+
+                            # Download button
+                            transcript_content = download_transcript(output_file)
+                            if transcript_content:
+                                st.download_button(
+                                    label="⬇️ Download Transcript",
+                                    data=transcript_content,
+                                    file_name=output_file,
+                                    mime="text/plain",
+                                    use_container_width=True,
+                                )
+
+                                # Show preview
+                                st.markdown("---")
+                                st.subheader("👁️ Transcript Preview")
+                                content_str = transcript_content.decode("utf-8")
+                                lines = content_str.split("\n")[:20]
+                                preview = "\n".join(lines)
+                                st.text_area(
+                                    "First 20 lines:",
+                                    preview,
+                                    height=250,
+                                    disabled=True,
+                                )
+
+    with tab3:
         st.header("📋 Available Transcripts")
 
         if st.button("🔄 Refresh List"):
@@ -379,7 +487,7 @@ def main() -> None:
                                     key=f"download-{transcript['filename']}",
                                 )
 
-    with tab3:
+    with tab4:
         st.header("ℹ️ About YouTube Transcriber")
 
         st.markdown("""

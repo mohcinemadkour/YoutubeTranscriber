@@ -116,6 +116,42 @@ def get_output_directory() -> Path:
         raise RuntimeError(f"Failed to create output directory: {str(e)}") from e
 
 
+def get_temp_directory() -> Path:
+    """
+    Get the temp directory path for uploaded files.
+
+    Returns:
+        Path: Temp directory path.
+
+    Raises:
+        RuntimeError: If temp directory cannot be created.
+    """
+    temp_dir = Path("./temp").resolve()
+
+    try:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        return temp_dir
+    except Exception as e:
+        raise RuntimeError(f"Failed to create temp directory: {str(e)}") from e
+
+
+def get_temp_path(filename: str) -> Path:
+    """
+    Get a path for a temporary file inside the temp directory.
+
+    Args:
+        filename: The filename to store in temp directory.
+
+    Returns:
+        Path: Full path to the temporary file.
+
+    Raises:
+        RuntimeError: If temp directory cannot be created.
+    """
+    temp_dir = get_temp_directory()
+    return temp_dir / filename
+
+
 def get_whisper_model() -> str:
     """
     Get the Whisper model name from environment.

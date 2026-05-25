@@ -1,7 +1,7 @@
 # YouTube-to-Transcript App - Development Notes
 
 ## Project Overview
-A production-ready local YouTube-to-transcript application that downloads audio from YouTube videos and transcribes them using OpenAI Whisper. ✅ **41 tests passing**, all quality checks passing.
+A production-ready local YouTube-to-transcript application that downloads audio from YouTube videos and transcribes them using OpenAI Whisper. ✅ **57 tests passing** (1 skipped), all quality checks passing.
 
 ## Quick Start
 
@@ -32,7 +32,7 @@ streamlit run frontend/app.py
 
 ## Testing
 ```bash
-# Run all tests (41 total)
+# Run all tests (57 passing, 1 skipped)
 pytest tests/ -v
 
 # With coverage
@@ -67,6 +67,7 @@ isort src/ main.py frontend/app.py tests/
   - `src/utils.py`: Shared utilities (logging, file sanitization, path handling)
 - **API endpoints**:
   - `POST /transcribe`: Accept YouTube URL, trigger transcription
+  - `POST /transcribe/file`: Accept audio/video file upload, trigger transcription
   - `GET /status/{job_id}`: Check transcription status
   - `GET /outputs/{filename}`: Download transcript
   - `GET /outputs`: List available transcripts
@@ -74,8 +75,13 @@ isort src/ main.py frontend/app.py tests/
 
 ### Frontend (Streamlit)
 - **Entry point**: `frontend/app.py`
+- **Two ways to transcribe**:
+  1. **YouTube URL tab**: Paste YouTube URL directly → downloads via yt-dlp (may be blocked)
+  2. **Upload Audio File tab**: Upload mp3/mp4/wav/m4a/ogg/webm/flac files → transcribe locally
+     - Tip: If YouTube blocks download, use [cobalt.tools](https://cobalt.tools) to download audio, then upload
 - Features:
   - YouTube URL input validation
+  - File upload with format validation (max 500MB)
   - Real-time transcription progress monitoring
   - Transcript download
   - Job status polling (2-second intervals)
@@ -146,13 +152,16 @@ YoutubeToArticle/
 │   ├── transcriber.py           # Whisper transcription
 │   └── utils.py                 # Shared utilities
 ├── frontend/
-│   └── app.py                   # Streamlit UI
+│   └── app.py                   # Streamlit UI (YouTube URL + Upload File tabs)
 ├── outputs/                     # Transcript outputs
+│   └── .gitkeep
+├── temp/                        # Temp directory for uploaded files
 │   └── .gitkeep
 └── tests/
     ├── __init__.py
-    ├── test_downloader.py       # 21 tests (6 new filename tests)
-    └── test_transcriber.py      # 20 tests
+    ├── test_downloader.py       # 21 tests (URL validation, download, cleanup, filename)
+    ├── test_transcriber.py      # 20 tests (audio validation, transcription, formatting, saving)
+    └── test_main.py             # 17 tests (file upload, job status, output endpoints)
 ```
 
 ## Build Order (Completed)
@@ -167,21 +176,46 @@ YoutubeToArticle/
 - [x] Step 9: README.md (user documentation)
 - [x] Step 10: Startup scripts (run.bat, run.sh)
 - [x] Step 11: CLAUDE.md final state
+- [x] Step 12: Local file upload feature (POST /transcribe/file, 17 new tests, 57 total)
 
 ## Test Results
 ```
-Total: 41 PASSED in 4.75 seconds
-├── test_downloader.py:  21 tests
-│   ├── URL validation: 8 tests ✓
-│   ├── Audio download: 4 tests ✓
-│   ├── Cleanup: 3 tests ✓
-│   └── Filename handling (NEW): 6 tests ✓
-└── test_transcriber.py: 20 tests
-    ├── Audio validation: 6 tests ✓
-    ├── Transcription: 4 tests ✓
-    ├── Formatting: 5 tests ✓
-    └── Saving: 5 tests ✓
+Total: 57 PASSED, 1 SKIPPED in 4.10 seconds
+├── test_downloader.py:  21 tests ✓
+│   ├── URL validation: 8 tests
+│   ├── Audio download: 4 tests
+│   ├── Cleanup: 3 tests
+│   └── Filename handling: 6 tests
+├── test_transcriber.py: 20 tests ✓
+│   ├── Audio validation: 6 tests
+│   ├── Transcription: 4 tests
+│   ├── Formatting: 5 tests
+│   └── Saving: 5 tests
+└── test_main.py:        17 tests ✓ (16 passed, 1 skipped)
+    ├── Health check: 1 test
+    ├── File upload: 10 tests (format validation, size limits, concurrent uploads)
+    ├── Job status: 2 tests
+    ├── Output endpoints: 2 tests
+    └── Large file test: 1 skipped (Windows memory constraints)
 ```
+
+## Two Ways to Transcribe
+
+### Method 1: YouTube URL (Direct)
+**Tab**: "YouTube URL"
+- Paste any YouTube video/playlist URL
+- App downloads audio via yt-dlp with anti-bot protection
+- Transcribed with Whisper medium model
+- **Limitation**: May be blocked by YouTube's aggressive bot detection
+- **Workaround**: Use Method 2 if blocked
+
+### Method 2: Upload Audio File (Fallback)
+**Tab**: "Upload Audio File"
+- Download audio from YouTube using [cobalt.tools](https://cobalt.tools)
+- Upload audio/video file (mp3, mp4, wav, m4a, ogg, webm, flac)
+- Max 500MB per file
+- Transcribed locally with Whisper
+- **Advantage**: No YouTube bot detection, always works
 
 ## Development Notes
 - All error handling includes logging before raising exceptions
@@ -191,3 +225,5 @@ Total: 41 PASSED in 4.75 seconds
 - Job processing is async with thread-safe state management using `threading.Lock()`
 - Filename sanitization removes: `"`, `<`, `>`, `|`, `:` and other invalid Windows characters
 - Type hints on all functions, comprehensive docstrings on all public functions
+- Temp files automatically cleaned up after processing
+- File size validation with clear 413 error for oversized uploads

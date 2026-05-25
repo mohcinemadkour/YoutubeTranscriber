@@ -44,6 +44,10 @@ outputs/*.txt
 outputs/*.json
 !outputs/.gitkeep
 
+# Temporary files (uploaded audio)
+temp/
+!temp/.gitkeep
+
 # Streamlit cache
 .streamlit/
 
