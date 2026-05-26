@@ -1,6 +1,7 @@
 """FastAPI backend for YouTube transcriber application."""
 
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Dict, Optional
@@ -452,6 +453,17 @@ def _process_file_transcription_job(job_id: str) -> None:
         if not temp_path.exists():
             raise RuntimeError(f"Temp file not found: {temp_file_path}")
 
+        logger.info(f"Temp file validation successful")
+        logger.info(f"Temp file absolute path: {temp_path.resolve()}")
+        logger.info(f"Temp file size: {temp_path.stat().st_size} bytes")
+
+        # Ensure file is fully flushed to disk (Windows compatibility)
+        time.sleep(0.5)
+
+        # Double-check file still exists after sleep
+        if not temp_path.exists():
+            raise RuntimeError(f"Temp file disappeared: {temp_file_path}")
+
         logger.info(f"Processing temp file: {temp_file_path}")
 
         with jobs_lock:
@@ -460,7 +472,8 @@ def _process_file_transcription_job(job_id: str) -> None:
 
         # Transcribe audio
         whisper_model = get_whisper_model()
-        result = transcribe_audio(temp_file_path, model_name=whisper_model)
+        logger.info(f"About to transcribe file: {str(temp_path.resolve())}")
+        result = transcribe_audio(str(temp_path.resolve()), model_name=whisper_model)
 
         with jobs_lock:
             jobs[job_id]["message"] = "Formatting transcript..."

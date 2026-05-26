@@ -2,6 +2,7 @@
 
 import logging
 import os
+import traceback
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +29,9 @@ def validate_audio_file(file_path: str) -> bool:
         raise ValueError("File path must be a non-empty string")
 
     file_obj = Path(file_path)
+    logger.info(f"Validating file: {file_obj}")
+    logger.info(f"File exists: {file_obj.exists()}")
+    logger.info(f"Absolute path: {file_obj.resolve()}")
 
     if not file_obj.exists():
         logger.warning(f"Audio file not found: {file_path}")
@@ -42,6 +46,7 @@ def validate_audio_file(file_path: str) -> bool:
         logger.warning(f"Audio file is not readable: {file_path}")
         return False
 
+    logger.info(f"File validation passed: {file_path}")
     return True
 
 
@@ -86,7 +91,8 @@ def transcribe_audio(
         # Prepare transcription options
         transcribe_opts = {"language": language} if language else {}
 
-        logger.info("Starting audio transcription...")
+        # Use path as-is (should already be absolute from caller)
+        logger.info(f"Starting audio transcription with path: {audio_file_path}")
         result = model.transcribe(audio_file_path, **transcribe_opts)
 
         logger.info(
@@ -104,9 +110,11 @@ def transcribe_audio(
 
     except RuntimeError as e:
         logger.error(f"Whisper model loading failed: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise RuntimeError(f"Failed to load Whisper model: {str(e)}") from e
     except Exception as e:
         logger.error(f"Transcription error: {str(e)}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
         raise RuntimeError(f"Transcription failed: {str(e)}") from e
 
 

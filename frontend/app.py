@@ -125,11 +125,14 @@ def submit_file_transcription(uploaded_file) -> Optional[str]:
         str: Job ID if successful, None otherwise.
     """
     try:
+        logger.info(f"Submitting file: {uploaded_file.name}, Size: {uploaded_file.size} bytes")
         files = {"file": (uploaded_file.name, uploaded_file.getbuffer())}
+        logger.info(f"File buffer size: {len(uploaded_file.getbuffer())} bytes")
+        
         response = requests.post(
             f"{API_BASE_URL}/transcribe/file",
             files=files,
-            timeout=30,
+            timeout=300,
         )
 
         if response.status_code == 200:
@@ -142,6 +145,10 @@ def submit_file_transcription(uploaded_file) -> Optional[str]:
             st.error(f"❌ Error: {error_detail}")
             return None
 
+    except requests.exceptions.Timeout:
+        logger.error("File upload timed out after 300 seconds")
+        st.error("❌ Upload timeout: File took too long to upload. Try a smaller file.")
+        return None
     except requests.exceptions.RequestException as e:
         logger.error(f"API request failed: {str(e)}")
         st.error(f"❌ Failed to connect to API: {str(e)}")
@@ -320,7 +327,7 @@ def main() -> None:
             )
 
         with col2:
-            submit_button = st.button("🚀 Transcribe", use_container_width=True)
+            submit_button = st.button("🚀 Transcribe", use_container_width=True, key="youtube_transcribe_button")
 
         if submit_button:
             if not youtube_url:
@@ -378,9 +385,11 @@ def main() -> None:
 
         st.markdown(
             '<div class="info-box">'
-            "<strong>📝 Tip:</strong> Download audio from YouTube using "
-            '<a href="https://cobalt.tools" target="_blank">cobalt.tools</a>, '
-            "then upload the audio file here."
+            "<strong>📝 Download Tools:</strong> If YouTube blocks automatic downloads, "
+            "manually download audio using:<br>"
+            "• <a href='https://www.giststack.com/tools/youtube-video-downloader' target='_blank'><strong>GistStack YouTube Downloader</strong></a><br>"
+            "• <a href='https://cobalt.tools' target='_blank'>cobalt.tools</a><br>"
+            "Then upload the audio file here."
             "</div>",
             unsafe_allow_html=True,
         )
@@ -388,42 +397,52 @@ def main() -> None:
         st.markdown("**Supported formats:** MP3, MP4, WAV, M4A, OGG, WebM, FLAC")
         st.markdown("**Max file size:** 500MB")
 
-        uploaded_file = st.file_uploader(
-            "Choose an audio or video file",
-            type=["mp3", "mp4", "wav", "m4a", "ogg", "webm", "flac"],
-            help="Select an audio or video file to transcribe",
-        )
+        # Use a form to handle file upload more reliably
+        with st.form("file_upload_form", clear_on_submit=False):
+            uploaded_file = st.file_uploader(
+                "Choose an audio or video file",
+                type=["mp3", "mp4", "wav", "m4a", "ogg", "webm", "flac"],
+                key="form_file_upload"
+            )
+            
+            submit_btn = st.form_submit_button("🚀 Transcribe", use_container_width=True)
 
-        if st.button("🚀 Transcribe File", use_container_width=True, key="transcribe_file"):
-            if not uploaded_file:
-                st.error("❌ Please select a file to transcribe")
-            else:
-                with st.spinner("Submitting file transcription request..."):
-                    job_id = submit_file_transcription(uploaded_file)
+        if submit_btn and uploaded_file is not None:
+            file_size_mb = uploaded_file.size / (1024 * 1024)
+            st.info(f"📁 Uploading: **{uploaded_file.name}** ({file_size_mb:.1f}MB)")
+            
+            with st.spinner("📤 Uploading... (5 min timeout)"):
+                try:
+                    # Get bytes directly - NOT buffer
+                    file_bytes = uploaded_file.getvalue()
+                    logger.info(f"File size: {len(file_bytes)} bytes, name: {uploaded_file.name}")
+                    
+                    files = {"file": (uploaded_file.name, file_bytes)}
+                    logger.info(f"Sending POST to {API_BASE_URL}/transcribe/file")
+                    
+                    response = requests.post(
+                        f"{API_BASE_URL}/transcribe/file",
+                        files=files,
+                        timeout=300,
+                    )
+                    logger.info(f"Response status: {response.status_code}")
 
-                    if job_id:
-                        st.success(
-                            f"✅ Job submitted! Job ID: `{job_id}`"
-                        )
-
+                    if response.status_code == 200:
+                        job_id = response.json()["job_id"]
+                        st.success(f"✅ Job submitted! Job ID: `{job_id}`")
+                        
                         # Show progress
                         st.markdown("---")
                         st.subheader("📊 Transcription Progress")
-
+                        
                         progress_bar = st.progress(0)
                         status_text = st.empty()
-
-                        output_file = wait_for_completion(
-                            job_id, progress_bar, status_text
-                        )
-
+                        output_file = wait_for_completion(job_id, progress_bar, status_text)
+                        
                         if output_file:
                             st.markdown("---")
-                            st.success(
-                                f"✅ Transcription completed! File: `{output_file}`"
-                            )
-
-                            # Download button
+                            st.success(f"✅ Transcription completed! File: `{output_file}`")
+                            
                             transcript_content = download_transcript(output_file)
                             if transcript_content:
                                 st.download_button(
@@ -434,7 +453,6 @@ def main() -> None:
                                     use_container_width=True,
                                 )
 
-                                # Show preview
                                 st.markdown("---")
                                 st.subheader("👁️ Transcript Preview")
                                 content_str = transcript_content.decode("utf-8")
@@ -446,6 +464,22 @@ def main() -> None:
                                     height=250,
                                     disabled=True,
                                 )
+                    else:
+                        error_detail = response.json().get("detail", "Unknown error")
+                        st.error(f"❌ Backend error: {error_detail}")
+                        logger.error(f"Backend error: {error_detail}")
+
+                except requests.exceptions.Timeout:
+                    st.error("❌ Upload timed out after 300 seconds. File too large?")
+                    logger.error("Upload timeout")
+                except requests.exceptions.ConnectionError as e:
+                    st.error(f"❌ Connection error: {str(e)}")
+                    logger.error(f"Connection error: {str(e)}")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    logger.error(f"Unexpected error: {str(e)}")
+        elif submit_btn and uploaded_file is None:
+            st.error("❌ Please select a file first")
 
     with tab3:
         st.header("📋 Available Transcripts")
