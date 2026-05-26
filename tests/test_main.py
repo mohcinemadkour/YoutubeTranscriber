@@ -23,10 +23,18 @@ def client(monkeypatch) -> TestClient:
 class TestHealthCheck:
     """Test suite for health check endpoint."""
 
-    def test_health_check(self, client: TestClient) -> None:
-        """Test GET / returns 200."""
+    def test_ui_endpoint(self, client: TestClient) -> None:
+        """Test GET / returns 200 with HTML content."""
         response = client.get("/")
         assert response.status_code == 200
+        assert "text/html" in response.headers.get("content-type", "")
+
+    def test_health_check_endpoint(self, client: TestClient) -> None:
+        """Test GET /health returns 200 with JSON status."""
+        response = client.get("/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
 
 
 class TestFileUploadEndpoint:

@@ -8,6 +8,8 @@ from typing import Dict, Optional
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, File, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.downloader import download_audio, cleanup_audio_file, validate_youtube_url
@@ -34,6 +36,18 @@ app = FastAPI(
     description="Transcribe YouTube videos to text",
     version="1.0.0",
 )
+
+# Add CORS middleware for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Job tracking dictionary
 jobs: Dict[str, Dict] = {}
@@ -82,18 +96,40 @@ class JobStatusResponse(BaseModel):
     error: Optional[str] = None
 
 
-@app.get("/", tags=["Health"])
-async def root() -> JSONResponse:
+@app.get("/", tags=["UI"])
+async def root() -> FileResponse:
     """
-    Health check endpoint.
+    Serve the main UI HTML page.
+
+    Returns:
+        FileResponse: The index.html file.
+    """
+    logger.info("UI request received")
+    return FileResponse("static/index.html", media_type="text/html")
+
+
+@app.get("/ui", tags=["UI"])
+async def serve_ui() -> FileResponse:
+    """
+    Serve the main UI HTML page (alternate endpoint).
+
+    Returns:
+        FileResponse: The index.html file.
+    """
+    logger.info("UI request received (via /ui)")
+    return FileResponse("static/index.html", media_type="text/html")
+
+
+@app.get("/health", tags=["Health"])
+async def health_check() -> JSONResponse:
+    """
+    Health check endpoint for monitoring.
 
     Returns:
         JSONResponse: API status information.
     """
     logger.info("Health check request received")
-    return JSONResponse(
-        {"status": "ok", "message": "YouTube Transcriber API is running"}
-    )
+    return JSONResponse({"status": "ok", "message": "API is running"})
 
 
 @app.post("/transcribe", response_model=TranscribeResponse, tags=["Transcription"])
@@ -174,6 +210,10 @@ async def transcribe_file(
     """
     logger.info(f"File upload request: {file.filename}")
 
+    # Validate filename is provided
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+
     # Validate file extension
     supported_formats = {".mp3", ".mp4", ".wav", ".m4a", ".ogg", ".webm", ".flac"}
     file_ext = Path(file.filename).suffix.lower()
@@ -244,7 +284,7 @@ async def transcribe_file(
         job_id=job_id,
         status="queued",
         message="File transcription job has been queued",
-        filename=file.filename,
+        filename=file.filename or "unknown",
     )
 
 
@@ -322,8 +362,8 @@ async def list_outputs() -> JSONResponse:
         output_dir = get_output_directory()
         files = [
             {
-                "filename": f.name,
-                "size_mb": round(f.stat().st_size / (1024 * 1024), 2),
+                "name": f.name,
+                "size": f.stat().st_size,
                 "modified": f.stat().st_mtime,
             }
             for f in output_dir.glob("*.txt")
@@ -453,7 +493,7 @@ def _process_file_transcription_job(job_id: str) -> None:
         if not temp_path.exists():
             raise RuntimeError(f"Temp file not found: {temp_file_path}")
 
-        logger.info(f"Temp file validation successful")
+        logger.info("Temp file validation successful")
         logger.info(f"Temp file absolute path: {temp_path.resolve()}")
         logger.info(f"Temp file size: {temp_path.stat().st_size} bytes")
 

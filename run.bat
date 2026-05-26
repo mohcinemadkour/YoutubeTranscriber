@@ -1,8 +1,9 @@
 @echo off
-REM YouTube to Article - Windows Startup Script
-REM Activates venv and starts both FastAPI backend and Streamlit frontend
+REM YouTube Transcriber - Windows Startup Script
+REM Starts FastAPI backend with integrated HTML/JS frontend
 
 call venv\Scripts\activate
-start "YouTube Transcriber Backend" python main.py
-timeout /t 3
-streamlit run frontend\app.py
+echo Starting YouTube Transcriber on http://localhost:8000
+start "YouTube Transcriber" python main.py
+timeout /t 2
+start http://localhost:8000

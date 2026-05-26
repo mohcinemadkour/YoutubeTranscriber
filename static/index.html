@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Transcriber</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: #ffffff;
+            color: #1f2937;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 30px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            color: #1f2937;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #6b7280;
+            font-size: 1.1rem;
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #e5e7eb;
+            margin-bottom: 30px;
+            gap: 30px;
+        }
+
+        .tab-button {
+            padding: 12px 20px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+            color: #6b7280;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            position: relative;
+            bottom: -2px;
+        }
+
+        .tab-button:hover {
+            color: #2563eb;
+        }
+
+        .tab-button.active {
+            color: #2563eb;
+            border-bottom: 2px solid #2563eb;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        /* YouTube Tab */
+        .url-input-section {
+            margin-bottom: 30px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #1f2937;
+        }
+
+        input[type="text"],
+        input[type="file"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 1rem;
+            transition: border-color 0.3s ease;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        button {
+            padding: 12px 24px;
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #1d4ed8;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+
+        button:disabled {
+            background-color: #d1d5db;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Upload Zone */
+        .upload-zone {
+            border: 2px dashed #d1d5db;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+            background-color: #f9fafb;
+        }
+
+        .upload-zone:hover {
+            border-color: #2563eb;
+            background-color: #f0f4ff;
+        }
+
+        .upload-zone.dragover {
+            border-color: #2563eb;
+            background-color: #eff6ff;
+            transform: scale(1.02);
+        }
+
+        .upload-zone p {
+            color: #6b7280;
+            margin-bottom: 10px;
+        }
+
+        .upload-zone.has-file {
+            border-color: #10b981;
+            background-color: #f0fdf4;
+        }
+
+        .file-name {
+            color: #10b981;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .info-box {
+            background-color: #f0f4ff;
+            border-left: 4px solid #2563eb;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+
+        .info-box p {
+            color: #4b5563;
+            font-size: 0.95rem;
+        }
+
+        .info-box a {
+            color: #2563eb;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .info-box a:hover {
+            text-decoration: underline;
+        }
+
+        .supported-formats {
+            color: #6b7280;
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+        }
+
+        .max-size {
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+
+        /* Progress Section */
+        .progress-section {
+            display: none;
+            margin: 30px 0;
+            padding: 20px;
+            background-color: #f9fafb;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .progress-section.active {
+            display: block;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .status-message {
+            font-weight: 600;
+            color: #2563eb;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #e5e7eb;
+            border-top-color: #2563eb;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background-color: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background-color: #2563eb;
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+
+        .progress-fill.complete {
+            width: 100%;
+        }
+
+        .preview-section {
+            margin-top: 20px;
+        }
+
+        .preview-title {
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 10px;
+            font-size: 0.95rem;
+        }
+
+        .transcript-preview {
+            background-color: #ffffff;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.85rem;
+            color: #374151;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .download-section {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .download-section.active {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .download-btn {
+            background-color: #10b981;
+        }
+
+        .download-btn:hover {
+            background-color: #059669;
+        }
+
+        .error-message {
+            color: #dc2626;
+            padding: 15px;
+            background-color: #fee2e2;
+            border-left: 4px solid #dc2626;
+            border-radius: 4px;
+            margin-top: 15px;
+        }
+
+        /* History Tab */
+        .history-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .history-table thead {
+            background-color: #f3f4f6;
+        }
+
+        .history-table th,
+        .history-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .history-table th {
+            font-weight: 600;
+            color: #374151;
+            font-size: 0.9rem;
+        }
+
+        .history-table tbody tr:hover {
+            background-color: #f9fafb;
+        }
+
+        .history-table a {
+            color: #2563eb;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .history-table a:hover {
+            text-decoration: underline;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #6b7280;
+        }
+
+        .empty-state-icon {
+            font-size: 3rem;
+            margin-bottom: 10px;
+        }
+
+        .refresh-btn {
+            background-color: #6b7280;
+        }
+
+        .refresh-btn:hover {
+            background-color: #4b5563;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+
+            h1 {
+                font-size: 1.8rem;
+            }
+
+            .tabs {
+                gap: 15px;
+            }
+
+            .tab-button {
+                padding: 10px 15px;
+                font-size: 0.9rem;
+            }
+
+            .upload-zone {
+                padding: 25px;
+            }
+
+            .history-controls {
+                flex-direction: column;
+                gap: 15px;
+                align-items: stretch;
+            }
+
+            .refresh-btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 YouTube Transcriber</h1>
+            <p class="subtitle">Download and transcribe YouTube videos locally</p>
+        </header>
+
+        <div class="tabs">
+            <button class="tab-button active" onclick="switchTab('youtube')">YouTube URL</button>
+            <button class="tab-button" onclick="switchTab('upload')">Upload Audio File</button>
+            <button class="tab-button" onclick="switchTab('history')">History</button>
+        </div>
+
+        <!-- YouTube Tab -->
+        <div id="youtube" class="tab-content active">
+            <div class="url-input-section">
+                <label for="youtubeUrl">YouTube URL</label>
+                <input 
+                    type="text" 
+                    id="youtubeUrl" 
+                    placeholder="https://www.youtube.com/watch?v=..."
+                >
+                <button onclick="transcribeUrl()" style="margin-top: 15px; width: 100%;">
+                    Transcribe URL
+                </button>
+            </div>
+
+            <div id="youtubeProgress" class="progress-section">
+                <div class="status-message">
+                    <span class="spinner"></span>
+                    <span id="youtubeStatus">Processing...</span>
+                </div>
+                <div class="progress-bar">
+                    <div id="youtubeProgressFill" class="progress-fill"></div>
+                </div>
+
+                <div class="preview-section">
+                    <div class="preview-title">Transcript Preview (first 20 lines)</div>
+                    <div id="youtubePreview" class="transcript-preview"></div>
+                </div>
+
+                <div id="youtubeDownload" class="download-section">
+                    <button class="download-btn" onclick="downloadTranscript('youtube')">
+                        📥 Download Transcript
+                    </button>
+                    <span id="youtubeFilename" style="color: #6b7280; font-size: 0.9rem;"></span>
+                </div>
+
+                <div id="youtubeError" class="error-message" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- Upload Tab -->
+        <div id="upload" class="tab-content">
+            <div class="url-input-section">
+                <label>Upload Audio File</label>
+
+                <div class="info-box">
+                    <p>
+                        💡 <strong>Tip:</strong> If YouTube blocks downloads, use 
+                        <a href="https://cobalt.tools" target="_blank">cobalt.tools</a> 
+                        to download audio, then upload here.
+                    </p>
+                </div>
+
+                <div class="supported-formats">
+                    <strong>Supported formats:</strong> MP3, MP4, WAV, M4A, OGG, WebM, FLAC
+                </div>
+                <div class="max-size">
+                    <strong>Max file size:</strong> 500MB
+                </div>
+
+                <div 
+                    class="upload-zone" 
+                    id="uploadZone"
+                    onclick="document.getElementById('fileInput').click()"
+                    ondrop="handleDrop(event)"
+                    ondragover="handleDragOver(event)"
+                    ondragleave="handleDragLeave(event)"
+                >
+                    <p style="font-size: 2rem; margin-bottom: 10px;">📁</p>
+                    <p><strong>Drag and drop your file here</strong></p>
+                    <p style="font-size: 0.9rem;">or click to browse</p>
+                    <div id="selectedFile" class="file-name"></div>
+                </div>
+
+                <input 
+                    type="file" 
+                    id="fileInput" 
+                    accept=".mp3,.mp4,.wav,.m4a,.ogg,.webm,.flac"
+                    onchange="handleFileSelect(event)"
+                >
+
+                <button onclick="transcribeFile()" style="margin-top: 15px; width: 100%;">
+                    Transcribe File
+                </button>
+            </div>
+
+            <div id="uploadProgress" class="progress-section">
+                <div class="status-message">
+                    <span class="spinner"></span>
+                    <span id="uploadStatus">Processing...</span>
+                </div>
+                <div class="progress-bar">
+                    <div id="uploadProgressFill" class="progress-fill"></div>
+                </div>
+
+                <div class="preview-section">
+                    <div class="preview-title">Transcript Preview (first 20 lines)</div>
+                    <div id="uploadPreview" class="transcript-preview"></div>
+                </div>
+
+                <div id="uploadDownload" class="download-section">
+                    <button class="download-btn" onclick="downloadTranscript('upload')">
+                        📥 Download Transcript
+                    </button>
+                    <span id="uploadFilename" style="color: #6b7280; font-size: 0.9rem;"></span>
+                </div>
+
+                <div id="uploadError" class="error-message" style="display: none;"></div>
+            </div>
+        </div>
+
+        <!-- History Tab -->
+        <div id="history" class="tab-content">
+            <div class="history-controls">
+                <h2 style="margin: 0;">Previous Transcripts</h2>
+                <button class="refresh-btn" onclick="loadHistory()">🔄 Refresh</button>
+            </div>
+
+            <div id="historyContent">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📋</div>
+                    <p>Loading transcripts...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+        let currentJobId = null;
+        let currentTab = 'youtube';
+        let selectedFile = null;
+
+        // Tab switching
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+            currentTab = tabName;
+
+            // Load history when history tab is opened
+            if (tabName === 'history') {
+                loadHistory();
+            }
+        }
+
+        // YouTube URL transcription
+        function transcribeUrl() {
+            const url = document.getElementById('youtubeUrl').value.trim();
+
+            if (!url) {
+                alert('Please enter a YouTube URL');
+                return;
+            }
+
+            if (!url.includes('youtube.com') && !url.includes('youtu.be')) {
+                alert('Please enter a valid YouTube URL');
+                return;
+            }
+
+            submitTranscriptionJob('/transcribe', { url }, 'youtube');
+        }
+
+        // File upload handling
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            document.getElementById('uploadZone').classList.add('dragover');
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            document.getElementById('uploadZone').classList.remove('dragover');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            document.getElementById('uploadZone').classList.remove('dragover');
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                selectFile(files[0]);
+            }
+        }
+
+        function handleFileSelect(e) {
+            if (e.target.files.length > 0) {
+                selectFile(e.target.files[0]);
+            }
+        }
+
+        function selectFile(file) {
+            const maxSize = 500 * 1024 * 1024; // 500MB
+            const supportedFormats = ['audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/m4a', 'audio/ogg', 'audio/webm', 'audio/flac', 'video/mp4'];
+
+            if (file.size > maxSize) {
+                alert(`File too large! Max size is 500MB, your file is ${(file.size / 1024 / 1024).toFixed(2)}MB`);
+                return;
+            }
+
+            selectedFile = file;
+            document.getElementById('uploadZone').classList.add('has-file');
+            document.getElementById('selectedFile').textContent = `✅ ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`;
+        }
+
+        function transcribeFile() {
+            if (!selectedFile) {
+                alert('Please select a file first');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            fetch(`${API_BASE_URL}/transcribe/file`, {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.json();
+            })
+            .then(data => {
+                if (data.job_id) {
+                    currentJobId = data.job_id;
+                    pollJobStatus('upload', data.job_id);
+                    showProgress('upload');
+                }
+            })
+            .catch(error => {
+                showError('upload', `Upload failed: ${error.message}`);
+            });
+        }
+
+        // Job submission and polling
+        function submitTranscriptionJob(endpoint, data, tab) {
+            fetch(`${API_BASE_URL}${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.json();
+            })
+            .then(result => {
+                if (result.job_id) {
+                    currentJobId = result.job_id;
+                    showProgress(tab);
+                    pollJobStatus(tab, result.job_id);
+                } else if (result.error) {
+                    showError(tab, result.error);
+                }
+            })
+            .catch(error => {
+                showError(tab, `Submission failed: ${error.message}`);
+            });
+        }
+
+        function pollJobStatus(tab, jobId) {
+            const pollInterval = setInterval(() => {
+                fetch(`${API_BASE_URL}/status/${jobId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        const status = data.status || 'unknown';
+                        updateProgress(tab, data.message || `Status: ${status}`, data.progress || 0);
+
+                        if (status === 'completed') {
+                            clearInterval(pollInterval);
+                            fetchTranscript(tab, data.output_file);
+                            completeProgress(tab);
+                        } else if (status === 'failed') {
+                            clearInterval(pollInterval);
+                            showError(tab, data.message || 'Transcription failed');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Poll error:', error);
+                    });
+            }, 2000);
+        }
+
+        function fetchTranscript(tab, filename) {
+            if (!filename) return;
+
+            fetch(`${API_BASE_URL}/outputs/${filename}`)
+                .then(response => {
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    return response.text();
+                })
+                .then(text => {
+                    const lines = text.split('\n').slice(0, 20).join('\n');
+                    document.getElementById(`${tab}Preview`).textContent = lines;
+                    document.getElementById(`${tab}Filename`).textContent = `📄 ${filename}`;
+                    document.getElementById(`${tab}Download`).classList.add('active');
+                    document.getElementById(`${tab}Download`).dataset.filename = filename;
+                })
+                .catch(error => {
+                    console.error('Fetch error:', error);
+                });
+        }
+
+        // UI helpers
+        function showProgress(tab) {
+            const progressEl = document.getElementById(`${tab}Progress`);
+            progressEl.classList.add('active');
+            document.getElementById(`${tab}ProgressFill`).style.width = '10%';
+            document.getElementById(`${tab}Status`).textContent = 'Starting...';
+        }
+
+        function updateProgress(tab, message, progress) {
+            document.getElementById(`${tab}Status`).textContent = message;
+            document.getElementById(`${tab}ProgressFill`).style.width = Math.min(progress, 90) + '%';
+        }
+
+        function completeProgress(tab) {
+            document.getElementById(`${tab}ProgressFill`).classList.add('complete');
+            document.getElementById(`${tab}Status`).textContent = '✅ Transcription complete!';
+        }
+
+        function showError(tab, message) {
+            const errorEl = document.getElementById(`${tab}Error`);
+            errorEl.textContent = `❌ Error: ${message}`;
+            errorEl.style.display = 'block';
+            document.getElementById(`${tab}Progress`).classList.add('active');
+        }
+
+        function downloadTranscript(tab) {
+            const filename = document.getElementById(`${tab}Download`).dataset.filename;
+            if (filename) {
+                window.location.href = `${API_BASE_URL}/outputs/${filename}`;
+            }
+        }
+
+        // History loading
+        function loadHistory() {
+            const historyContent = document.getElementById('historyContent');
+            historyContent.innerHTML = '<div class="empty-state"><div class="empty-state-icon">⏳</div><p>Loading...</p></div>';
+
+            fetch(`${API_BASE_URL}/outputs`)
+                .then(response => {
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data.files || data.files.length === 0) {
+                        historyContent.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📭</div><p>No transcripts yet</p></div>';
+                        return;
+                    }
+
+                    let html = '<table class="history-table"><thead><tr><th>Filename</th><th>Size</th><th>Action</th></tr></thead><tbody>';
+                    data.files.forEach(file => {
+                        const size = file.size > 1024 * 1024 
+                            ? `${(file.size / 1024 / 1024).toFixed(2)}MB`
+                            : `${(file.size / 1024).toFixed(2)}KB`;
+                        html += `<tr>
+                            <td>${file.name}</td>
+                            <td>${size}</td>
+                            <td><a href="${API_BASE_URL}/outputs/${file.name}">Download</a></td>
+                        </tr>`;
+                    });
+                    html += '</tbody></table>';
+                    historyContent.innerHTML = html;
+                })
+                .catch(error => {
+                    historyContent.innerHTML = `<div class="empty-state" style="color: #dc2626;">Error loading history: ${error.message}</div>`;
+                });
+        }
+
+        // Load history on page load
+        window.addEventListener('load', () => {
+            loadHistory();
+        });
+    </script>
+</body>
+</html>

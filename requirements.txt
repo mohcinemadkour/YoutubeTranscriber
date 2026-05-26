@@ -5,8 +5,8 @@ pydantic==2.13.4
 pydantic-core==2.46.4
 pydantic-settings==2.1.0
 
-# Frontend
-streamlit==1.28.1
+# Frontend (HTML/JS served by FastAPI via StaticFiles)
+# No external frontend framework - vanilla JS + HTML/CSS
 
 # Audio/Video processing
 yt-dlp==2023.12.30
