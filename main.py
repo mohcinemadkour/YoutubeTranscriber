@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 from src.downloader import download_audio, cleanup_audio_file, validate_youtube_url
 from src.transcriber import (
     transcribe_audio,
-    format_transcript_with_timestamps,
     save_transcript,
 )
 from src.utils import (
@@ -204,8 +203,10 @@ async def transcribe(
             "progress": 0,
             "output_file": None,
             "error": None,
+            "segments": [],
             "youtube_url": request.youtube_url,
             "include_metadata": request.include_metadata,
+            "started_at": datetime.now().isoformat(),
         }
 
     logger.info(f"New transcription job created: {job_id}")
@@ -519,19 +520,14 @@ def _process_transcription_job(
         result = transcribe_audio(audio_file_path, model_name=whisper_model)
 
         with jobs_lock:
-            jobs[job_id]["message"] = "Formatting transcript..."
-            jobs[job_id]["progress"] = 80
-
-        logger.info("Audio transcribed successfully")
-
-        # Format transcript with timestamps
-        formatted_transcript = format_transcript_with_timestamps(result["segments"])
+            jobs[job_id]["message"] = "Saving transcript..."
+            jobs[job_id]["progress"] = 90
 
         # Build output filename
         output_filename = build_output_filename(video_title)
         output_file_path = output_dir / output_filename
 
-        # Save transcript
+        # Save plain-text transcript
         metadata = (
             {
                 "Title": video_title,
@@ -544,7 +540,7 @@ def _process_transcription_job(
         )
 
         save_transcript(
-            formatted_transcript,
+            result["text"],
             str(output_file_path),
             include_metadata=include_metadata,
             metadata=metadata,
@@ -621,46 +617,24 @@ def _process_file_transcription_job(job_id: str) -> None:
         logger.info(f"About to transcribe file: {str(temp_path.resolve())}")
         result = transcribe_audio(str(temp_path.resolve()), model_name=whisper_model)
 
-        logger.info("Audio transcribed successfully")
-        
-        # Stream segments to job status for live display
+        # Append segments to job for live preview streaming
         duration = result.get("duration", 0)
         segments = result.get("segments", [])
-        logger.info(f"Processing {len(segments)} segments for live streaming")
-        
+
         with jobs_lock:
             jobs[job_id]["message"] = "Processing transcript..."
             jobs[job_id]["progress"] = 60
+            jobs[job_id]["segments"] = [
+                {
+                    "start": round(s.get("start", 0), 2),
+                    "end": round(s.get("end", 0), 2),
+                    "text": s.get("text", "").strip(),
+                }
+                for s in segments
+            ]
+            jobs[job_id]["segment_count"] = len(segments)
+            jobs[job_id]["progress"] = 90
             save_jobs()
-        
-        # Append segments one by one to simulate streaming
-        for idx, segment in enumerate(segments):
-            with jobs_lock:
-                # Add segment to job
-                jobs[job_id]["segments"].append({
-                    "start": round(segment.get("start", 0), 2),
-                    "end": round(segment.get("end", 0), 2),
-                    "text": segment.get("text", "").strip()
-                })
-                jobs[job_id]["segment_count"] = len(jobs[job_id]["segments"])
-                
-                # Update progress based on segment end time
-                if duration > 0:
-                    progress = int(60 + (segment.get("end", 0) / duration) * 35)
-                    jobs[job_id]["progress"] = min(progress, 95)
-                
-                jobs[job_id]["message"] = f"Processing segment {idx + 1}/{len(segments)}"
-                save_jobs()
-            
-            # Small delay to allow polling to see incremental progress
-            time.sleep(0.01)
-        
-        with jobs_lock:
-            jobs[job_id]["message"] = "Formatting transcript..."
-            jobs[job_id]["progress"] = 95
-
-        # Format transcript with timestamps
-        formatted_transcript = format_transcript_with_timestamps(result["segments"])
 
         # Build output filename from original filename
         filename_without_ext = Path(original_filename).stem
@@ -668,7 +642,7 @@ def _process_file_transcription_job(job_id: str) -> None:
         output_dir = get_output_directory()
         output_file_path = output_dir / output_filename
 
-        # Save transcript with metadata
+        # Save plain-text transcript with metadata
         metadata = {
             "Title": filename_without_ext,
             "Language": result["language"],
@@ -677,7 +651,7 @@ def _process_file_transcription_job(job_id: str) -> None:
         }
 
         save_transcript(
-            formatted_transcript,
+            result["text"],
             str(output_file_path),
             include_metadata=True,
             metadata=metadata,

@@ -1,17 +1,75 @@
-"""Audio transcription module using OpenAI Whisper."""
+"""Audio transcription module using faster-whisper."""
 
 import getpass
 import logging
 import os
 import shutil
 import subprocess
+import sys
+import threading
 import traceback
 from pathlib import Path
 from typing import Optional
 
-import whisper
+# Module-level model cache so the model is loaded once and reused across requests.
+_model_cache: dict = {}
+_model_lock = threading.Lock()
+
+
+def _add_nvidia_to_path() -> None:
+    """Prepend NVIDIA pip-installed CUDA DLL directories to PATH (Windows)."""
+    try:
+        import site
+        for sp in site.getsitepackages():
+            nvidia_dir = Path(sp) / "nvidia"
+            if nvidia_dir.exists():
+                for sub in nvidia_dir.iterdir():
+                    bin_dir = sub / "bin"
+                    if bin_dir.exists():
+                        current = os.environ.get("PATH", "")
+                        if str(bin_dir) not in current:
+                            os.environ["PATH"] = str(bin_dir) + os.pathsep + current
+    except Exception:
+        pass
+
+
+if sys.platform == "win32":
+    _add_nvidia_to_path()
+
+from faster_whisper import WhisperModel
 
 logger = logging.getLogger(__name__)
+
+
+def _load_model(model_name: str) -> WhisperModel:
+    """Return a cached WhisperModel, loading it on first use.
+
+    Detects CUDA via ctranslate2; falls back to CPU/int8 if CUDA libs are
+    unavailable.
+    """
+    with _model_lock:
+        if model_name not in _model_cache:
+            try:
+                import ctranslate2
+                device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+            except Exception:
+                device = "cpu"
+            compute_type = "float16" if device == "cuda" else "int8"
+            logger.info(f"Loading faster-whisper '{model_name}' on {device}/{compute_type}")
+            try:
+                _model_cache[model_name] = WhisperModel(
+                    model_name, device=device, compute_type=compute_type
+                )
+            except RuntimeError as e:
+                if "cublas" in str(e).lower() or "cuda" in str(e).lower():
+                    logger.warning("CUDA libraries unavailable — falling back to CPU/int8")
+                    _model_cache[model_name] = WhisperModel(
+                        model_name, device="cpu", compute_type="int8"
+                    )
+                else:
+                    raise
+            logger.info(f"Model '{model_name}' ready")
+        return _model_cache[model_name]
 
 
 def get_audio_duration(audio_file_path: str) -> float:
@@ -344,40 +402,29 @@ def transcribe_audio(
         duration = get_audio_duration(audio_to_transcribe)
         logger.info(f"Audio duration determined: {duration:.1f}s")
 
-        logger.info(f"Loading Whisper model: {model_name}")
-        model = whisper.load_model(model_name)
-        logger.info(f"Model loaded successfully: {model_name}")
+        model = _load_model(model_name)
 
-        # Prepare transcription options
-        transcribe_opts = {"language": language} if language else {}
+        transcribe_kwargs: dict = {"beam_size": 5}
+        if language:
+            transcribe_kwargs["language"] = language
 
-        # Use path as-is (should already be absolute from caller)
-        logger.info(f"Starting audio transcription with path: {audio_to_transcribe}")
-        result = model.transcribe(audio_to_transcribe, **transcribe_opts)
+        logger.info(f"Transcribing: {audio_to_transcribe}")
+        segments_gen, info = model.transcribe(audio_to_transcribe, **transcribe_kwargs)
+        segments = [{"start": s.start, "end": s.end, "text": s.text} for s in segments_gen]
+        full_text = " ".join(s["text"].strip() for s in segments)
 
-        logger.info(
-            f"Transcription completed successfully. "
-            f"Language: {result.get('language', 'unknown')}, "
-            f"Duration: {result.get('duration', 'unknown')}s"
-        )
-
+        logger.info(f"Transcription done — language: {info.language}, segments: {len(segments)}")
         return {
-            "text": result.get("text", ""),
-            "segments": result.get("segments", []),
-            "language": result.get("language", "unknown"),
+            "text": full_text,
+            "segments": segments,
+            "language": info.language,
             "model": model_name,
             "duration": duration,
         }
 
-    except RuntimeError as e:
-        logger.error(f"Whisper model loading failed: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise RuntimeError(f"Failed to load Whisper model: {str(e)}") from e
     except Exception as e:
-        error_msg = f"Transcription error: {str(e)}"
-        logger.error(error_msg)
-        logger.error(f"Full traceback:\n{traceback.format_exc()}")
-        raise RuntimeError(error_msg) from e
+        logger.error(f"Transcription failed:\n{traceback.format_exc()}")
+        raise RuntimeError(f"Transcription error: {e}") from e
     finally:
         # Clean up temporary WAV file if created
         if temp_wav_file and Path(temp_wav_file).exists():

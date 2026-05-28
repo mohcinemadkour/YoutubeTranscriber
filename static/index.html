@@ -577,7 +577,7 @@
     </div>
 
     <script>
-        const API_BASE_URL = 'http://localhost:8000';
+        const API_BASE_URL = '';  // served by the same FastAPI origin
         let currentJobId = null;
         let currentTab = 'youtube';
         let selectedFile = null;
@@ -617,7 +617,7 @@
                 return;
             }
 
-            submitTranscriptionJob('/transcribe', { url }, 'youtube');
+            submitTranscriptionJob('/transcribe', { youtube_url: url }, 'youtube');
         }
 
         // File upload handling
@@ -740,20 +740,13 @@
                         const status = data.status || 'unknown';
                         updateProgress(tab, data.message || `Status: ${status}`, data.progress || 0);
 
-                        // Stream segments as they arrive
+                        // Stream plain text as segments arrive
                         const segments = data.segments || [];
                         if (segments.length > previousSegmentCount) {
                             const previewEl = document.getElementById(`${tab}Preview`);
-                            
-                            // Add new segments
                             for (let i = previousSegmentCount; i < segments.length; i++) {
-                                const seg = segments[i];
-                                const time = formatTime(seg.start);
-                                const line = `${time} ${seg.text}\n`;
-                                previewEl.textContent += line;
+                                previewEl.textContent += segments[i].text + ' ';
                             }
-                            
-                            // Auto-scroll to bottom
                             previewEl.scrollTop = previewEl.scrollHeight;
                             previousSegmentCount = segments.length;
                         }
@@ -761,8 +754,17 @@
                         if (status === 'completed') {
                             clearInterval(pollInterval);
                             isProcessing = false;
-                            fetchTranscript(tab, data.output_file);
                             completeProgress(tab);
+                            // For YouTube (no streaming preview), fetch file to populate preview.
+                            // For file uploads, segments were streamed — just enable download.
+                            if (tab === 'youtube' || !document.getElementById(`${tab}Preview`).textContent.trim()) {
+                                fetchTranscript(tab, data.output_file);
+                            } else {
+                                document.getElementById(`${tab}Filename`).textContent = `\uD83D\uDCC4 ${data.output_file}`;
+                                const dl = document.getElementById(`${tab}Download`);
+                                dl.classList.add('active');
+                                dl.dataset.filename = data.output_file;
+                            }
                         } else if (status === 'failed') {
                             clearInterval(pollInterval);
                             isProcessing = false;
@@ -776,13 +778,6 @@
                         console.error('Poll error:', error);
                     });
             }, 2000);
-        }
-
-        function formatTime(seconds) {
-            const hours = Math.floor(seconds / 3600);
-            const minutes = Math.floor((seconds % 3600) / 60);
-            const secs = Math.floor(seconds % 60);
-            return `[${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}]`;
         }
 
         function fetchTranscript(tab, filename) {
