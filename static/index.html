@@ -816,13 +816,19 @@
         function completeProgress(tab) {
             document.getElementById(`${tab}ProgressFill`).classList.add('complete');
             document.getElementById(`${tab}Status`).textContent = '✅ Transcription complete!';
+            const progressSection = document.getElementById(`${tab}Progress`);
+            const spinner = progressSection.querySelector('.spinner');
+            if (spinner) spinner.style.display = 'none';
         }
 
         function showError(tab, message) {
             const errorEl = document.getElementById(`${tab}Error`);
             errorEl.textContent = `❌ Error: ${message}`;
             errorEl.style.display = 'block';
-            document.getElementById(`${tab}Progress`).classList.add('active');
+            const progressSection = document.getElementById(`${tab}Progress`);
+            progressSection.classList.add('active');
+            const spinner = progressSection.querySelector('.spinner');
+            if (spinner) spinner.style.display = 'none';
         }
 
         function downloadTranscript(tab) {
