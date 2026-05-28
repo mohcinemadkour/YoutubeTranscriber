@@ -39,9 +39,18 @@ ENV/
 .env.local
 .env.*.local
 
-# Outputs (transcripts)
+# Outputs (transcripts and media)
 outputs/*.txt
 outputs/*.json
+outputs/*.mp4
+outputs/*.mp3
+outputs/*.wav
+outputs/*.m4a
+outputs/*.webm
+outputs/*.ogg
+outputs/*.flac
+outputs/*.part
+outputs/*.mhtml
 !outputs/.gitkeep
 
 # Temporary files (uploaded audio)

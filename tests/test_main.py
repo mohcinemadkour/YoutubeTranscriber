@@ -212,6 +212,33 @@ class TestJobStatus:
         assert data["job_id"] == job_id
         assert data["status"] == "queued"
         assert "progress" in data
+        assert "segments" in data
+        assert isinstance(data["segments"], list)
+
+    def test_segments_field_in_status(self, client: TestClient) -> None:
+        """Test that segments field is present and properly formatted."""
+        files = {"file": ("test_audio.mp3", BytesIO(b"fake content"))}
+        upload_response = client.post("/transcribe/file", files=files)
+        job_id = upload_response.json()["job_id"]
+
+        # Get status
+        response = client.get(f"/status/{job_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        
+        # Verify segments field exists and is a list
+        assert "segments" in data
+        assert isinstance(data["segments"], list)
+        
+        # Each segment should have start, end, and text fields
+        for segment in data["segments"]:
+            assert "start" in segment
+            assert "end" in segment
+            assert "text" in segment
+            assert isinstance(segment["start"], (int, float))
+            assert isinstance(segment["end"], (int, float))
+            assert isinstance(segment["text"], str)
 
 
 class TestOutputEndpoints:

@@ -1,7 +1,10 @@
 """Audio transcription module using OpenAI Whisper."""
 
+import getpass
 import logging
 import os
+import shutil
+import subprocess
 import traceback
 from pathlib import Path
 from typing import Optional
@@ -9,6 +12,236 @@ from typing import Optional
 import whisper
 
 logger = logging.getLogger(__name__)
+
+
+def get_audio_duration(audio_file_path: str) -> float:
+    """
+    Get the duration of an audio file in seconds using FFprobe.
+    
+    Args:
+        audio_file_path: Path to the audio file.
+        
+    Returns:
+        float: Duration in seconds, or 0 if unable to determine.
+        
+    Raises:
+        RuntimeError: If FFprobe is not available or fails.
+    """
+    try:
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1:nokey=1",
+            audio_file_path
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=30,
+            text=True
+        )
+        
+        if result.returncode == 0 and result.stdout.strip():
+            duration = float(result.stdout.strip())
+            logger.info(f"Audio duration: {duration:.2f} seconds ({duration/60:.1f} minutes)")
+            return duration
+        else:
+            logger.warning(f"Could not determine audio duration for {audio_file_path}")
+            return 0.0
+            
+    except Exception as e:
+        logger.warning(f"Error getting audio duration: {str(e)}")
+        return 0.0
+
+
+def find_ffmpeg_path() -> Optional[str]:
+    """
+    Find FFmpeg executable in PATH or common installation locations.
+    
+    Returns:
+        str: Path to ffmpeg executable, or None if not found.
+    """
+    # First, try to find in PATH using shutil
+    try:
+        ffmpeg_path = shutil.which("ffmpeg")
+        if ffmpeg_path:
+            logger.info(f"Found FFmpeg in PATH: {ffmpeg_path}")
+            return ffmpeg_path
+    except Exception as e:
+        logger.debug(f"shutil.which failed: {e}")
+    
+    # On Windows, check WinGet installation location (common)
+    if os.name == 'nt':  # Windows
+        winget_path = r"C:\Users\{username}\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin\ffmpeg.exe"
+        # Replace {username} with actual username
+        username = getpass.getuser()
+        winget_path = winget_path.replace("{username}", username)
+        
+        if os.path.exists(winget_path):
+            logger.info(f"Found FFmpeg via WinGet: {winget_path}")
+            return winget_path
+        
+        # Try common installation paths
+        common_paths = [
+            r"C:\ffmpeg\bin\ffmpeg.exe",
+            r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+            r"C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe",
+        ]
+        
+        for path in common_paths:
+            if os.path.exists(path):
+                logger.info(f"Found FFmpeg at: {path}")
+                return path
+    
+    logger.warning("FFmpeg not found in PATH or common locations")
+    return None
+
+
+def setup_ffmpeg_path() -> None:
+    """
+    Set up PATH environment variable to include FFmpeg directory.
+    
+    Raises:
+        RuntimeError: If FFmpeg cannot be found.
+    """
+    # Check if FFmpeg is already in PATH
+    try:
+        subprocess.run(
+            ["ffmpeg", "-version"],
+            capture_output=True,
+            timeout=5,
+            check=False
+        )
+        logger.info("FFmpeg is already available in PATH")
+        return
+    except FileNotFoundError:
+        pass
+    
+    # FFmpeg not in PATH, try to find and add it
+    ffmpeg_path = find_ffmpeg_path()
+    if not ffmpeg_path:
+        raise RuntimeError(
+            "FFmpeg not found. Please install it:\n"
+            "  Windows: winget install Gyan.FFmpeg\n"
+            "  macOS: brew install ffmpeg\n"
+            "  Linux: sudo apt-get install ffmpeg"
+        )
+    
+    # Get the directory containing ffmpeg
+    ffmpeg_dir = os.path.dirname(ffmpeg_path)
+    logger.info(f"Found FFmpeg at: {ffmpeg_path}")
+    logger.info(f"FFmpeg directory: {ffmpeg_dir}")
+    
+    # Add to PATH if not already there
+    current_path = os.environ.get("PATH", "")
+    if ffmpeg_dir not in current_path:
+        os.environ["PATH"] = f"{ffmpeg_dir};{current_path}"
+        logger.info(f"Added FFmpeg directory to PATH")
+    
+    # Verify it works
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            capture_output=True,
+            timeout=5,
+            text=True
+        )
+        if result.returncode == 0:
+            logger.info("FFmpeg verified and working")
+        else:
+            logger.warning(f"FFmpeg version check returned {result.returncode}")
+    except Exception as e:
+        logger.error(f"Failed to verify FFmpeg: {str(e)}")
+        raise RuntimeError(f"FFmpeg found but failed to execute: {str(e)}")
+
+
+def check_ffmpeg_available() -> bool:
+    """
+    Check if FFmpeg is available in PATH or can be located.
+    
+    Returns:
+        bool: True if ffmpeg is found, False otherwise.
+    """
+    try:
+        setup_ffmpeg_path()
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            capture_output=True,
+            timeout=5
+        )
+        is_available = result.returncode == 0
+        if is_available:
+            logger.info("FFmpeg check passed: version command successful")
+        else:
+            logger.warning(f"FFmpeg found but version check failed with code {result.returncode}")
+        return is_available
+    except RuntimeError as e:
+        # FFmpeg path could not be found
+        logger.error(f"FFmpeg setup failed: {str(e)}")
+        return False
+    except FileNotFoundError:
+        logger.warning("FFmpeg not found in PATH")
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking FFmpeg: {str(e)}")
+        return False
+
+
+def extract_audio_from_video(video_file_path: str, output_wav_path: str) -> bool:
+    """
+    Extract audio from video file (MP4, WebM, etc.) to WAV format using FFmpeg.
+    
+    Args:
+        video_file_path: Path to video file
+        output_wav_path: Path where WAV audio will be saved
+        
+    Returns:
+        bool: True if extraction successful, False otherwise.
+        
+    Raises:
+        RuntimeError: If FFmpeg is not available or extraction fails.
+    """
+    if not check_ffmpeg_available():
+        raise RuntimeError(
+            "FFmpeg is required to process video files but is not installed. "
+            "Please install FFmpeg and add it to your PATH, or upload an audio-only file."
+        )
+    
+    try:
+        logger.info(f"Extracting audio from video: {video_file_path}")
+        cmd = [
+            "ffmpeg",
+            "-i", video_file_path,
+            "-vn",  # No video
+            "-acodec", "pcm_s16le",  # PCM audio codec
+            "-ar", "16000",  # 16kHz sample rate
+            "-ac", "1",  # Mono
+            "-y",  # Overwrite output
+            output_wav_path
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=300,  # 5 minute timeout
+            text=True
+        )
+        
+        if result.returncode != 0:
+            error_msg = result.stderr or "Unknown FFmpeg error"
+            logger.error(f"FFmpeg extraction failed: {error_msg}")
+            raise RuntimeError(f"Failed to extract audio from video: {error_msg}")
+        
+        logger.info(f"Audio extracted successfully to: {output_wav_path}")
+        return True
+        
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("FFmpeg audio extraction timed out (>5 minutes)")
+    except Exception as e:
+        logger.error(f"Audio extraction error: {str(e)}")
+        raise RuntimeError(f"Failed to extract audio: {str(e)}") from e
 
 
 def validate_audio_file(file_path: str) -> bool:
@@ -78,12 +311,39 @@ def transcribe_audio(
     """
     logger.info(f"Starting transcription for: {audio_file_path} (model: {model_name})")
 
+    # Set up FFmpeg path before any processing
+    try:
+        setup_ffmpeg_path()
+    except RuntimeError as e:
+        logger.error(f"FFmpeg setup failed: {str(e)}")
+        raise
+
     # Validate audio file
     if not validate_audio_file(audio_file_path):
         logger.error(f"Invalid audio file: {audio_file_path}")
         raise ValueError(f"Invalid or missing audio file: {audio_file_path}")
 
+    file_path_obj = Path(audio_file_path)
+    file_ext = file_path_obj.suffix.lower()
+    audio_to_transcribe = audio_file_path
+    temp_wav_file = None
+
     try:
+        # Check if this is a video file that needs audio extraction
+        video_formats = {".mp4", ".webm", ".avi", ".mov", ".mkv", ".flv"}
+        if file_ext in video_formats:
+            logger.info(f"Video file detected ({file_ext}), extracting audio to WAV...")
+            # Create temp WAV file in same directory as input
+            temp_wav_file = str(file_path_obj.parent / f"temp_audio_{file_path_obj.stem}.wav")
+            extract_audio_from_video(audio_file_path, temp_wav_file)
+            audio_to_transcribe = temp_wav_file
+            logger.info(f"Audio extracted, will transcribe: {audio_to_transcribe}")
+
+        # Get audio duration for progress tracking
+        logger.info("Getting audio duration...")
+        duration = get_audio_duration(audio_to_transcribe)
+        logger.info(f"Audio duration determined: {duration:.1f}s")
+
         logger.info(f"Loading Whisper model: {model_name}")
         model = whisper.load_model(model_name)
         logger.info(f"Model loaded successfully: {model_name}")
@@ -92,8 +352,8 @@ def transcribe_audio(
         transcribe_opts = {"language": language} if language else {}
 
         # Use path as-is (should already be absolute from caller)
-        logger.info(f"Starting audio transcription with path: {audio_file_path}")
-        result = model.transcribe(audio_file_path, **transcribe_opts)
+        logger.info(f"Starting audio transcription with path: {audio_to_transcribe}")
+        result = model.transcribe(audio_to_transcribe, **transcribe_opts)
 
         logger.info(
             f"Transcription completed successfully. "
@@ -106,6 +366,7 @@ def transcribe_audio(
             "segments": result.get("segments", []),
             "language": result.get("language", "unknown"),
             "model": model_name,
+            "duration": duration,
         }
 
     except RuntimeError as e:
@@ -113,9 +374,18 @@ def transcribe_audio(
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise RuntimeError(f"Failed to load Whisper model: {str(e)}") from e
     except Exception as e:
-        logger.error(f"Transcription error: {str(e)}")
+        error_msg = f"Transcription error: {str(e)}"
+        logger.error(error_msg)
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
-        raise RuntimeError(f"Transcription failed: {str(e)}") from e
+        raise RuntimeError(error_msg) from e
+    finally:
+        # Clean up temporary WAV file if created
+        if temp_wav_file and Path(temp_wav_file).exists():
+            try:
+                Path(temp_wav_file).unlink()
+                logger.info(f"Cleaned up temporary WAV file: {temp_wav_file}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up temp WAV: {str(e)}")
 
 
 def format_transcript_with_timestamps(segments: list) -> str:

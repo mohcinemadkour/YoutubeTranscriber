@@ -300,7 +300,8 @@
             border: 1px solid #d1d5db;
             border-radius: 6px;
             padding: 15px;
-            max-height: 300px;
+            min-height: 200px;
+            max-height: 400px;
             overflow-y: auto;
             font-family: 'Monaco', 'Courier New', monospace;
             font-size: 0.85rem;
@@ -664,30 +665,41 @@
         }
 
         function transcribeFile() {
-            if (!selectedFile) {
+            // Get file from input element directly
+            const fileInput = document.getElementById('fileInput');
+            if (!fileInput.files || fileInput.files.length === 0) {
                 alert('Please select a file first');
                 return;
             }
 
+            const file = fileInput.files[0];
+            console.log(`Uploading file: ${file.name}, size: ${file.size} bytes`);
+
             const formData = new FormData();
-            formData.append('file', selectedFile);
+            formData.append('file', file);
+
+            showProgress('upload');
 
             fetch(`${API_BASE_URL}/transcribe/file`, {
                 method: 'POST',
                 body: formData
             })
             .then(response => {
+                console.log(`Upload response status: ${response.status}`);
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 return response.json();
             })
             .then(data => {
+                console.log(`Job created: ${data.job_id}`);
                 if (data.job_id) {
                     currentJobId = data.job_id;
                     pollJobStatus('upload', data.job_id);
-                    showProgress('upload');
+                } else if (data.detail) {
+                    showError('upload', data.detail);
                 }
             })
             .catch(error => {
+                console.error('Upload error:', error);
                 showError('upload', `Upload failed: ${error.message}`);
             });
         }
@@ -718,6 +730,9 @@
         }
 
         function pollJobStatus(tab, jobId) {
+            let previousSegmentCount = 0;
+            let isProcessing = true;
+            
             const pollInterval = setInterval(() => {
                 fetch(`${API_BASE_URL}/status/${jobId}`)
                     .then(response => response.json())
@@ -725,19 +740,49 @@
                         const status = data.status || 'unknown';
                         updateProgress(tab, data.message || `Status: ${status}`, data.progress || 0);
 
+                        // Stream segments as they arrive
+                        const segments = data.segments || [];
+                        if (segments.length > previousSegmentCount) {
+                            const previewEl = document.getElementById(`${tab}Preview`);
+                            
+                            // Add new segments
+                            for (let i = previousSegmentCount; i < segments.length; i++) {
+                                const seg = segments[i];
+                                const time = formatTime(seg.start);
+                                const line = `${time} ${seg.text}\n`;
+                                previewEl.textContent += line;
+                            }
+                            
+                            // Auto-scroll to bottom
+                            previewEl.scrollTop = previewEl.scrollHeight;
+                            previousSegmentCount = segments.length;
+                        }
+
                         if (status === 'completed') {
                             clearInterval(pollInterval);
+                            isProcessing = false;
                             fetchTranscript(tab, data.output_file);
                             completeProgress(tab);
                         } else if (status === 'failed') {
                             clearInterval(pollInterval);
-                            showError(tab, data.message || 'Transcription failed');
+                            isProcessing = false;
+                            // Show detailed error message
+                            const errorMsg = data.error || data.message || 'Transcription failed';
+                            console.error('Job failed with error:', errorMsg);
+                            showError(tab, errorMsg);
                         }
                     })
                     .catch(error => {
                         console.error('Poll error:', error);
                     });
             }, 2000);
+        }
+
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            return `[${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}]`;
         }
 
         function fetchTranscript(tab, filename) {

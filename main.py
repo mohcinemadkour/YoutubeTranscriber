@@ -1,10 +1,14 @@
 """FastAPI backend for YouTube transcriber application."""
 
+import json
+import logging
 import threading
 import time
+import traceback
 import uuid
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks, File, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -52,6 +56,31 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # Job tracking dictionary
 jobs: Dict[str, Dict] = {}
 jobs_lock = threading.Lock()
+JOBS_FILE = Path("jobs.json")
+
+
+def load_jobs() -> None:
+    """Load jobs from persistent storage."""
+    global jobs
+    if JOBS_FILE.exists():
+        try:
+            with open(JOBS_FILE, 'r') as f:
+                jobs = json.load(f)
+            logger.info(f"Loaded {len(jobs)} jobs from disk")
+        except Exception as e:
+            logger.error(f"Error loading jobs: {str(e)}")
+            jobs = {}
+    else:
+        jobs = {}
+
+
+def save_jobs() -> None:
+    """Save jobs to persistent storage."""
+    try:
+        with open(JOBS_FILE, 'w') as f:
+            json.dump(jobs, f, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Error saving jobs: {str(e)}")
 
 
 # Pydantic models
@@ -94,6 +123,14 @@ class JobStatusResponse(BaseModel):
     progress: int = Field(default=0, description="Progress percentage (0-100)")
     output_file: Optional[str] = None
     error: Optional[str] = None
+    segments: List[Dict[str, Any]] = Field(default_factory=list, description="List of transcribed segments with timestamps")
+
+
+@app.on_event("startup")
+async def startup_event() -> None:
+    """Initialize on server startup."""
+    logger.info("Starting FastAPI server")
+    load_jobs()
 
 
 @app.get("/", tags=["UI"])
@@ -270,15 +307,24 @@ async def transcribe_file(
             "progress": 0,
             "output_file": None,
             "error": None,
+            "traceback": None,
+            "segments": [],
             "temp_file_path": str(temp_file_path),
             "original_filename": file.filename,
             "include_metadata": True,
+            "started_at": datetime.now().isoformat(),
+            "segment_count": 0,
         }
+        save_jobs()
 
     logger.info(f"New file transcription job created: {job_id}")
+    logger.info(f"Job stored in jobs dict. Total jobs: {len(jobs)}")
 
     # Start background task
     background_tasks.add_task(_process_file_transcription_job, job_id)
+
+    logger.info(f"Background task queued for job: {job_id}")
+    logger.info(f"Jobs dict now contains: {list(jobs.keys())}")
 
     return FileUploadResponse(
         job_id=job_id,
@@ -303,22 +349,82 @@ async def get_job_status(job_id: str) -> JobStatusResponse:
         HTTPException: If job_id is not found.
     """
     logger.info(f"Status check for job: {job_id}")
+    logger.info(f"Current jobs in memory: {list(jobs.keys())}")
 
     with jobs_lock:
         if job_id not in jobs:
             logger.warning(f"Job not found: {job_id}")
-            raise HTTPException(status_code=404, detail="Job not found")
+            logger.warning(f"Available jobs: {list(jobs.keys())}")
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
 
         job = jobs[job_id]
+        
+        # Check for timeout (30 minutes)
+        if job["status"] == "processing":
+            try:
+                started_at = datetime.fromisoformat(job.get("started_at", datetime.now().isoformat()))
+                elapsed_seconds = (datetime.now() - started_at).total_seconds()
+                if elapsed_seconds > 1800:  # 30 minutes
+                    job["status"] = "failed"
+                    job["error"] = "Transcription timed out after 30 minutes. Try a smaller file or use the 'base' model instead of 'medium'."
+                    job["message"] = "❌ Timeout"
+                    save_jobs()
+            except Exception as e:
+                logger.warning(f"Error checking timeout: {str(e)}")
 
     return JobStatusResponse(
         job_id=job_id,
         status=job["status"],
         message=job["message"],
         progress=job["progress"],
-        output_file=job["output_file"],
-        error=job["error"],
+        output_file=job.get("output_file"),
+        error=job.get("error"),
+        segments=job.get("segments", []),
     )
+
+
+@app.get("/progress/{job_id}", tags=["Status"])
+async def get_job_progress(job_id: str) -> Dict[str, Any]:
+    """
+    Get rich progress information for a job.
+
+    Args:
+        job_id: The job ID to check.
+
+    Returns:
+        dict: Rich progress details including segment count and elapsed time.
+
+    Raises:
+        HTTPException: If job_id is not found.
+    """
+    with jobs_lock:
+        if job_id not in jobs:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+        job = jobs[job_id]
+        
+        # Calculate elapsed time
+        elapsed_seconds = 0
+        try:
+            started_at = datetime.fromisoformat(job.get("started_at", datetime.now().isoformat()))
+            elapsed_seconds = int((datetime.now() - started_at).total_seconds())
+        except Exception:
+            pass
+        
+        # Get latest segment
+        latest_segment = None
+        if job.get("segments"):
+            latest_segment = job["segments"][-1]
+
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "segments_count": job.get("segment_count", len(job.get("segments", []))),
+        "latest_segment": latest_segment,
+        "progress": job["progress"],
+        "elapsed_seconds": elapsed_seconds,
+        "message": job["message"],
+    }
 
 
 @app.get("/outputs/{filename}", tags=["Downloads"])
@@ -397,7 +503,7 @@ def _process_transcription_job(
             jobs[job_id]["status"] = "processing"
             jobs[job_id]["message"] = "Downloading audio..."
             jobs[job_id]["progress"] = 10
-
+            save_jobs()
         # Download audio
         output_dir = get_output_directory()
         audio_file_path, video_title = download_audio(youtube_url, str(output_dir))
@@ -515,11 +621,43 @@ def _process_file_transcription_job(job_id: str) -> None:
         logger.info(f"About to transcribe file: {str(temp_path.resolve())}")
         result = transcribe_audio(str(temp_path.resolve()), model_name=whisper_model)
 
+        logger.info("Audio transcribed successfully")
+        
+        # Stream segments to job status for live display
+        duration = result.get("duration", 0)
+        segments = result.get("segments", [])
+        logger.info(f"Processing {len(segments)} segments for live streaming")
+        
+        with jobs_lock:
+            jobs[job_id]["message"] = "Processing transcript..."
+            jobs[job_id]["progress"] = 60
+            save_jobs()
+        
+        # Append segments one by one to simulate streaming
+        for idx, segment in enumerate(segments):
+            with jobs_lock:
+                # Add segment to job
+                jobs[job_id]["segments"].append({
+                    "start": round(segment.get("start", 0), 2),
+                    "end": round(segment.get("end", 0), 2),
+                    "text": segment.get("text", "").strip()
+                })
+                jobs[job_id]["segment_count"] = len(jobs[job_id]["segments"])
+                
+                # Update progress based on segment end time
+                if duration > 0:
+                    progress = int(60 + (segment.get("end", 0) / duration) * 35)
+                    jobs[job_id]["progress"] = min(progress, 95)
+                
+                jobs[job_id]["message"] = f"Processing segment {idx + 1}/{len(segments)}"
+                save_jobs()
+            
+            # Small delay to allow polling to see incremental progress
+            time.sleep(0.01)
+        
         with jobs_lock:
             jobs[job_id]["message"] = "Formatting transcript..."
-            jobs[job_id]["progress"] = 80
-
-        logger.info("Audio transcribed successfully")
+            jobs[job_id]["progress"] = 95
 
         # Format transcript with timestamps
         formatted_transcript = format_transcript_with_timestamps(result["segments"])
@@ -549,17 +687,23 @@ def _process_file_transcription_job(job_id: str) -> None:
 
         with jobs_lock:
             jobs[job_id]["status"] = "completed"
-            jobs[job_id]["message"] = "Transcription completed successfully"
+            jobs[job_id]["message"] = "✅ Transcription complete!"
             jobs[job_id]["progress"] = 100
             jobs[job_id]["output_file"] = output_filename
+            save_jobs()
 
     except Exception as e:
-        logger.error(f"File transcription job failed: {str(e)}")
+        error_message = str(e)
+        traceback_str = traceback.format_exc()
+        logger.error(f"File transcription job failed: {error_message}")
+        logger.error(f"Full traceback:\n{traceback_str}")
         with jobs_lock:
             jobs[job_id]["status"] = "failed"
-            jobs[job_id]["message"] = "Transcription failed"
-            jobs[job_id]["error"] = str(e)
+            jobs[job_id]["message"] = f"Transcription failed: {error_message}"
+            jobs[job_id]["error"] = error_message
+            jobs[job_id]["traceback"] = traceback_str
             jobs[job_id]["progress"] = 0
+            save_jobs()
 
     finally:
         # Cleanup temp file
